@@ -118,3 +118,7 @@ KICAD_MCP_LIVE_PCB=/path/to/scratch/copy.kicad_pcb .venv/bin/pytest tests/test_l
 - Schematic editing once KiCad 11's IPC schematic API is available.
 - Region-cropped renders.
 - Live (unsaved) variants of measure / net_info over IPC.
+
+## License
+
+MIT
