@@ -21,7 +21,9 @@ mcp = FastMCP(
         "Read-only access to KiCad projects. `path` may be a project directory, a .kicad_pro, a .kicad_pcb "
         "or a .kicad_sch; it defaults to the current directory. Units are millimetres, KiCad coordinates "
         "(y grows downward). Start with project_info, then board_summary / schematic_summary, then drill in. "
-        "Prefer these tools over reading .kicad_* files directly."
+        "Prefer these tools over reading .kicad_* files directly. Read tools work from the files on disk; "
+        "editing tools (move_component, add_track, ...) change the board open in a running KiCad through "
+        "its IPC API and need save_board before the file-based tools see the result."
     ),
 )
 
@@ -387,6 +389,18 @@ def erc(path: Optional[str] = None, type: Optional[str] = None, severity: Option
     individual findings with sheet and position. severity = error | warning."""
     report = cli.erc(resolve_sch(path))
     return checks.summarize(report, "erc", type, severity, limit, include_excluded)
+
+
+# ------------------------------------------------------------------ editing (IPC)
+
+try:
+    from . import edit_tools as _edit_tools
+
+    globals().update(_edit_tools.register(mcp))
+except ImportError as _e:  # kicad-python not installed: read-only mode
+    import sys as _sys
+
+    print(f"kicad-mcp: editing tools disabled ({_e})", file=_sys.stderr)
 
 
 def main() -> None:

@@ -50,6 +50,37 @@ All tools take `path`: a project directory, `.kicad_pro`, `.kicad_pcb` or `.kica
 | `sch_nets` / `sch_net` | schematic nets and their pins |
 | `bom` | grouped bill of materials with part-number fields |
 
+## Editing tools (KiCad IPC API)
+
+These change the board that is open in a running KiCad, through the official IPC API
+(`kicad-python`). Each call is one undo step in the editor. Nothing touches the file until
+`save_board`, so the file-based read tools see edits only after saving.
+
+| Tool | What it does |
+|---|---|
+| `kicad_status` | is the API reachable, which boards/schematics are open |
+| `move_component` / `move_components` | absolute or relative move, rotate, flip, lock; batch is one undo step |
+| `set_component_attributes` | DNP, exclude from BOM / position files, locked |
+| `set_component_field` | value, datasheet or description text on the board footprint |
+| `add_track` / `add_via` | draw segments through points on a layer for a net; place a via (netclass defaults) |
+| `ripup_net` | delete a net's tracks (and vias), optionally one layer |
+| `get_selection` / `select_components` | read what the user selected; highlight parts for them |
+| `refill_zones`, `save_board`, `live_component` | housekeeping and live position lookup |
+
+Setup: in KiCad, *Preferences → Preferences… → Plugins → Enable KiCad API*, restart KiCad, open
+the board in the PCB editor. Only an open PCB editor registers the document handlers; the
+project manager alone answers "no handler available". The server tries `KICAD_API_SOCKET`,
+then the default socket (`/tmp/kicad/api.sock`), then per-process sockets (`api-<pid>.sock`)
+that standalone editors create, and picks the instance that has the requested board open.
+On macOS a board can be opened headlessly for an agent with
+`open -n -a /Applications/KiCad/KiCad.app/Contents/Applications/pcbnew.app --args <file.kicad_pcb>`.
+
+Batches that both flip and move a part flip first and compute the move from the flipped item,
+because changes staged in an open commit are not visible to later calls until it is pushed.
+
+Schematic editing over IPC needs KiCad 11 (the `kipy.schematic` module is marked as such);
+KiCad 10 exposes only the board.
+
 ## Install
 
 Requires KiCad 9+ (tested with 10.0.6 on macOS) and Python 3.10+.
@@ -78,11 +109,12 @@ Environment overrides: `KICAD_APP` (macOS .app bundle), `KICAD_CLI`, `KICAD_PYTH
 
 ```bash
 KICAD_MCP_TEST_PROJECT=/path/to/a/kicad/project .venv/bin/pytest
+# live editing tests, against a scratch copy open in the PCB editor:
+KICAD_MCP_LIVE_PCB=/path/to/scratch/copy.kicad_pcb .venv/bin/pytest tests/test_live.py
 ```
 
 ## Roadmap
 
-- Editing (move/rotate footprints, route hints) through the KiCad IPC API (`kicad-python`),
-  which is the supported write path with undo support in a running KiCad session.
-- Schematic editing, pending IPC API coverage for schematics.
+- Schematic editing once KiCad 11's IPC schematic API is available.
 - Region-cropped renders.
+- Live (unsaved) variants of measure / net_info over IPC.
