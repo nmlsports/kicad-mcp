@@ -3,7 +3,7 @@ name = "kicad-mcp"
 version = "0.1.0"
 description = "MCP server giving agents compact, read-only access to KiCad boards and schematics"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.2"]
+dependencies = ["mcp>=1.2", "kicad-python>=0.8"]
 
 [project.scripts]
 kicad-mcp = "kicad_mcp.server:main"

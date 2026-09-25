@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-PROJECT = os.environ.get("KICAD_MCP_TEST_PROJECT", "/Users/amoghkashyap/nml/device/hardware/device-hardware")
-pytestmark = pytest.mark.skipif(not os.path.isdir(PROJECT), reason="no test project available")
+PROJECT = os.environ.get("KICAD_MCP_TEST_PROJECT", "")
+pytestmark = pytest.mark.skipif(not PROJECT or not os.path.isdir(PROJECT), reason="set KICAD_MCP_TEST_PROJECT to a KiCad project dir")
 
 
 @pytest.fixture(scope="module")
