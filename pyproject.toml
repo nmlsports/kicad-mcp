@@ -1,0 +1,19 @@
+[project]
+name = "kicad-mcp"
+version = "0.1.0"
+description = "MCP server giving agents compact, read-only access to KiCad boards and schematics"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.2"]
+
+[project.scripts]
+kicad-mcp = "kicad_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["kicad_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
