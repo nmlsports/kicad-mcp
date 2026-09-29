@@ -78,6 +78,25 @@ On macOS a board can be opened headlessly for an agent with
 Batches that both flip and move a part flip first and compute the move from the flipped item,
 because changes staged in an open commit are not visible to later calls until it is pushed.
 
+Footprint edits and what KiCad 10.0.x's API loses:
+
+- KiCad rebuilds every footprint it receives through `UpdateItems` from the API message, and the
+  children travel in absolute coordinates, so the client moves them. kicad-python's
+  `position`/`orientation` setters drop 3D models on rotation, never move text boxes or
+  dimensions, and truncate (1 nm errors that DRC reports as `lib_footprint_mismatch`).
+  `kicad_mcp/fpgeom.py` does the move instead: it keeps every child, is exact for multiples of
+  90°, and uses KiCad's rounding otherwise. Footprints that end up where they were, such as a flip
+  and flip back, are not sent at all.
+- The API message has no field for a footprint's `(units ...)` (symbol unit → pins, for gate
+  swapping) or for pad fabrication properties (`pad_prop_bga`, ...). Any footprint edit drops them.
+  `save_board` compares the saved file with the one it replaced (`kicad_mcp/pcbfile.py`), copies
+  those blocks back (matched by UUID) and reloads the board in the editor, which clears its undo
+  history. It warns about other lost footprint data (models, embedded files, groups...).
+- Cosmetic round-trip changes that remain (KiCad bugs): polygons lose a repeated closing point,
+  keepout zones inside footprints get default min-thickness/thermal settings, and a `default`
+  stroke is saved as `solid`. The first two show up as `lib_footprint_mismatch`; *Update
+  Footprints from Library* clears them.
+
 Schematic editing over IPC needs KiCad 11 (the `kipy.schematic` module is marked as such);
 KiCad 10 exposes only the board.
 

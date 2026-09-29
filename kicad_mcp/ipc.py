@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -15,11 +16,13 @@ from kipy.board import Board
 from kipy.board_types import FootprintInstance, Net, Track, Via
 from kipy.errors import ApiError
 from kipy.errors import ConnectionError as KiCadConnectionError
-from kipy.geometry import Angle, Vector2
+from kipy.geometry import Vector2
 from kipy.proto.common.types.base_types_pb2 import DocumentType
 from kipy.util.board_layer import canonical_name, layer_from_canonical_name
-from kipy.util.units import from_mm, to_mm
+from kipy.util.units import to_mm
 
+from . import fpgeom, pcbfile
+from .fpgeom import nm
 from .paths import resolve_pcb
 
 ENABLE_HINT = (
@@ -240,7 +243,12 @@ def move_footprints(board: Board, moves: Sequence[dict]) -> list[dict]:
     """moves: [{ref, x?, y?, dx?, dy?, rotation?, rotate_by?, flip?, locked?}] in mm / degrees.
 
     Flips run first inside the commit and the moves are computed from the flipped items, because
-    changes staged in an open commit are not visible to later calls until it is pushed."""
+    changes staged in an open commit are not visible to later calls until it is pushed.
+
+    Children are moved with fpgeom.place, not kipy's position/orientation setters (which drop
+    3D models and leave 1 nm rounding). Footprints that end up where they were (e.g. a pure flip)
+    are not sent back, because KiCad rebuilds every footprint it receives from the API message and
+    loses what that cannot carry, such as (units ...); save() puts those back."""
     fps = footprints_by_ref(board)
     entries: list[tuple[dict, FootprintInstance]] = []
     for m in moves:
@@ -254,19 +262,25 @@ def move_footprints(board: Board, moves: Sequence[dict]) -> list[dict]:
         if to_flip:
             flipped = {str(x.id): x for x in board.flip_items(to_flip)}
             items = [(m, flipped.get(str(f.id), f)) for m, f in items]
+        changed = []
         for m, f in items:
-            x = m["x"] if m.get("x") is not None else to_mm(f.position.x)
-            y = m["y"] if m.get("y") is not None else to_mm(f.position.y)
-            x += float(m.get("dx") or 0)
-            y += float(m.get("dy") or 0)
-            f.position = Vector2.from_xy_mm(float(x), float(y))
-            if m.get("rotation") is not None:
-                f.orientation = Angle.from_degrees(float(m["rotation"]))
-            if m.get("rotate_by"):
-                f.orientation = Angle.from_degrees((f.orientation.degrees + float(m["rotate_by"])) % 360)
-            if m.get("locked") is not None:
+            x = nm(m["x"]) if m.get("x") is not None else f.position.x
+            y = nm(m["y"]) if m.get("y") is not None else f.position.y
+            x += nm(m.get("dx") or 0)
+            y += nm(m.get("dy") or 0)
+            rot = float(m["rotation"]) if m.get("rotation") is not None else f.orientation.degrees
+            rot += float(m.get("rotate_by") or 0)
+            try:
+                moved = fpgeom.place(f, x, y, rot)
+            except fpgeom.Unsupported as e:
+                raise IpcError(str(e))
+            if m.get("locked") is not None and bool(m["locked"]) != f.locked:
                 f.locked = bool(m["locked"])
-        return board.update_items([f for _, f in items])
+                moved = True
+            if moved and all(c is not f for c in changed):
+                changed.append(f)
+        updated = {str(u.id): u for u in board.update_items(changed)} if changed else {}
+        return [updated.get(str(f.id), f) for _, f in items]
 
     updated = _commit(board, f"kicad-mcp: move {len(entries)} footprint(s)", do)
     return [fp_state(u) for u in updated]
@@ -312,14 +326,14 @@ def add_tracks(board: Board, net_name: str, points: Sequence[Sequence[float]], l
     lid = layer_id(layer)
     if width_mm is None:
         nc = board.get_netclass_for_nets(net).get(net.name)
-        width = (nc.track_width if nc and nc.track_width else None) or from_mm(0.2)
+        width = (nc.track_width if nc and nc.track_width else None) or nm(0.2)
     else:
-        width = from_mm(width_mm)
+        width = nm(width_mm)
     tracks = []
     for (x1, y1), (x2, y2) in zip(points, points[1:]):
         t = Track()
-        t.start = Vector2.from_xy_mm(float(x1), float(y1))
-        t.end = Vector2.from_xy_mm(float(x2), float(y2))
+        t.start = Vector2.from_xy(nm(x1), nm(y1))
+        t.end = Vector2.from_xy(nm(x2), nm(y2))
         t.layer = lid
         t.width = width
         t.net = net
@@ -335,10 +349,10 @@ def add_via(board: Board, net_name: str, x: float, y: float, diameter_mm: Option
     net = find_net(board, net_name)
     nc = board.get_netclass_for_nets(net).get(net.name)
     v = Via()
-    v.position = Vector2.from_xy_mm(float(x), float(y))
+    v.position = Vector2.from_xy(nm(x), nm(y))
     v.net = net
-    v.diameter = from_mm(diameter_mm) if diameter_mm else ((nc.via_diameter if nc else None) or from_mm(0.6))
-    v.drill_diameter = from_mm(drill_mm) if drill_mm else ((nc.via_drill if nc else None) or from_mm(0.3))
+    v.diameter = nm(diameter_mm) if diameter_mm else ((nc.via_diameter if nc else None) or nm(0.6))
+    v.drill_diameter = nm(drill_mm) if drill_mm else ((nc.via_drill if nc else None) or nm(0.3))
     created = _commit(board, f"kicad-mcp: via on {net.name}", lambda: board.create_items([v]))[0]
     return {"net": net.name, "x": x, "y": y, "diameter_mm": round(to_mm(created.diameter), 4),
             "drill_mm": round(to_mm(created.drill_diameter), 4)}
@@ -384,9 +398,38 @@ def select(board: Board, refs: Sequence[str], clear: bool = True) -> list[str]:
     return [ref_of(f) for f in items]
 
 
-def save(board: Board) -> str:
+def _read(path: Path) -> Optional[str]:
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def save(board: Board) -> dict:
+    """Save, then compare the file with the version it replaced. Footprint data that KiCad's API
+    drops from edited footprints ((units ...), pad fabrication properties) is copied back from that
+    version and the editor is reloaded from the fixed file, which clears its undo history; any
+    other lost footprint data is reported."""
+    path = _doc_path(board.document)
+    before = _read(path)
     board.save()
-    return str(_doc_path(board.document))
+    out: dict[str, Any] = {"path": str(path), "restored": {}, "lost": {}}
+    after = _read(path) if before is not None else None
+    if after is None:
+        return out
+    fixed, restored = pcbfile.restore(before, after)
+    if restored:
+        tmp = path.with_name(path.name + ".kicad-mcp.tmp")
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(fixed)
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+        board.revert()
+        out["restored"] = restored
+        after = fixed
+    out["lost"] = pcbfile.lost_data(before, after)
+    return out
 
 
 def refill_zones(board: Board) -> None:

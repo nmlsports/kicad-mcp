@@ -56,6 +56,31 @@ def test_track_via_ripup_roundtrip(s):
     assert "tracks_removed" in out and "vias_removed" in out
 
 
+def test_edits_keep_footprint_data_exact(s):
+    """Rotating/moving through the API used to drop 3D models (kipy) and (units ...) / pad
+    properties (KiCad), and leave 1 nm rounding. A round trip must now save the footprint as it was."""
+    from kicad_mcp import ipc, pcbfile
+    assert s.save_board(PCB).startswith("Saved")
+    text = open(PCB, encoding="utf-8").read()
+    # a footprint with a 3D model, and without polygons or zones (their round trip through KiCad's
+    # API changes them: closing points, keepout settings)
+    fp = max((f for f in pcbfile.footprints(text) if f.all("model") and f.ref
+              and not any(c.token in ("fp_poly", "zone") for c in f.children)),
+             key=lambda f: bool(f.all("units")))
+    block = text[fp.node.start:fp.node.end]
+    s.move_components(PCB, moves=[{"ref": fp.ref, "rotate_by": 90, "dx": 1.27}])
+    s.move_components(PCB, moves=[{"ref": fp.ref, "rotate_by": 90}, {"ref": fp.ref, "rotate_by": 180}])
+    out = s.move_components(PCB, moves=[{"ref": fp.ref, "dx": -1.27}])
+    assert "Error" not in out
+    value = ipc.live_footprint(ipc.open_board(PCB), fp.ref)["value"]
+    s.set_component_field(PCB, ref=fp.ref, field="value", value=value)
+    saved = s.save_board(PCB)
+    assert "WARNING" not in saved, saved
+    after = open(PCB, encoding="utf-8").read()
+    new = next(f for f in pcbfile.footprints(after) if f.uuid == fp.uuid)
+    assert after[new.node.start:new.node.end] == block
+
+
 def test_selection_and_save(s):
     ref = _first_ref(s)
     assert s.select_components(PCB, refs=[ref]).startswith("Selected:")

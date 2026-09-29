@@ -128,8 +128,22 @@ def register(mcp) -> dict:
 
     @edit_tool
     def save_board(path: Optional[str] = None) -> str:
-        """Save the open board to disk so file-based tools (measure, drc, render...) see the edits."""
-        return f"Saved {ipc.save(ipc.open_board(path))}"
+        """Save the open board to disk so file-based tools (measure, drc, render...) see the edits.
+        Also checks the saved footprints against the previous file: data KiCad's API drops from
+        edited footprints (symbol-unit maps, pad fabrication properties) is put back and the editor
+        is reloaded; other lost footprint data (3D models, embedded files...) is reported."""
+        r = ipc.save(ipc.open_board(path))
+        lines = [f"Saved {r['path']}"]
+        if r["restored"]:
+            lines.append("Put back what KiCad's API dropped from edited footprints ("
+                         + "; ".join(f"{ref}: {', '.join(what)}" for ref, what in r["restored"].items())
+                         + ") and reloaded the board in the editor, which cleared its undo history.")
+        if r["lost"]:
+            lines.append("WARNING: footprint data lost compared to the previous file: "
+                         + "; ".join(f"{ref}: {', '.join(what)}" for ref, what in r["lost"].items())
+                         + ". Recover it from git, or in KiCad with Tools > Update Footprints from "
+                           "Library (3D models) / Update PCB from Schematic (units).")
+        return "\n".join(lines)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def live_component(path: Optional[str] = None, ref: str = "") -> str:
