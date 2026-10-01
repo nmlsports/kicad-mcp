@@ -1,4 +1,4 @@
-"""MCP server: compact, read-only access to KiCad boards and schematics."""
+"""MCP server: compact access to KiCad boards and schematics, plus live board edits over IPC."""
 import functools
 from collections import Counter
 from pathlib import Path
@@ -18,7 +18,7 @@ from .worker_client import WorkerError, worker
 mcp = FastMCP(
     "kicad",
     instructions=(
-        "Read-only access to KiCad projects. `path` may be a project directory, a .kicad_pro, a .kicad_pcb "
+        "Compact access to KiCad projects. `path` may be a project directory, a .kicad_pro, a .kicad_pcb "
         "or a .kicad_sch; it defaults to the current directory. Units are millimetres, KiCad coordinates "
         "(y grows downward). Start with project_info, then board_summary / schematic_summary, then drill in. "
         "Prefer these tools over reading .kicad_* files directly. Read tools work from the files on disk; "

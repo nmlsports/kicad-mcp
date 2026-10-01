@@ -1,16 +1,17 @@
 # kicad-mcp
 
-An MCP server that gives coding agents a compact, read-only view of KiCad projects:
-measurements, component and net queries, DRC/ERC summaries, BOM, and renders, without
-dumping 20k-line `.kicad_pcb` / `.kicad_sch` files into context.
+An MCP server that gives coding agents a compact view of KiCad projects (measurements,
+component and net queries, DRC/ERC summaries, BOM, and renders) without dumping 20k-line
+`.kicad_pcb` / `.kicad_sch` files into context, and lets them edit the board open in KiCad.
 
-It does not reimplement KiCad. It sits on the three machine interfaces KiCad already ships:
+It does not reimplement KiCad. It sits on the four machine interfaces KiCad already ships:
 
 | Surface | Used for |
 |---|---|
 | `pcbnew` Python module (KiCad's bundled Python) | board geometry: footprints, pads, nets, tracks, zones, distances |
 | `kicad-cli` | DRC, ERC, netlist export, SVG/3D renders |
 | netlist XML (from `kicad-cli sch export netlist`) | schematic symbols, pins, nets, BOM |
+| IPC API (`kicad-python`, running KiCad) | live board edits: move/rotate/flip, fields, tracks, vias, selection |
 
 ## Architecture
 
@@ -18,7 +19,8 @@ It does not reimplement KiCad. It sits on the three machine interfaces KiCad alr
 agent ──MCP stdio──> kicad_mcp/server.py   (Python 3.10+, mcp SDK)
                         ├─ worker_client ──JSON lines──> worker/board_worker.py  (KiCad's Python 3.9, imports pcbnew)
                         ├─ cli.py           ──subprocess──> kicad-cli  (DRC/ERC/netlist/render, cached by mtime)
-                        └─ netlist.py       parses the netlist XML
+                        ├─ netlist.py       parses the netlist XML
+                        └─ edit_tools.py ── ipc.py ──socket──> running KiCad  (kicad-python; edits the open board)
 ```
 
 The `pcbnew` module is compiled against KiCad's own Python (3.9 on macOS), and the MCP SDK
